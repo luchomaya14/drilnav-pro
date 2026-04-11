@@ -140,27 +140,7 @@ def comparar_dls(df):
     return df
 
 
-def detectar_kop(df, umbral_inc=2.0, estaciones_consecutivas=3):
-    """
-    Detecta el primer punto donde INC supera el umbral
-    durante N estaciones consecutivas.
-    """
-    df = df.copy()
 
-    condicion = df["INC"] > umbral_inc
-
-    contador = 0
-    for i, val in enumerate(condicion):
-        if val:
-            contador += 1
-        else:
-            contador = 0
-
-        if contador >= estaciones_consecutivas:
-            idx_kop = i - estaciones_consecutivas + 1
-            return idx_kop, df.loc[idx_kop]
-
-    return None, None
 
 
 def obtener_puntos_clave(df):
@@ -252,23 +232,7 @@ def crear_grafico_3d(df, kop_row=None, puntos_clave=None, evento_row=None, event
         customdata=np.stack([df["MD"], df["INC"], df["AZI"], df["TVD"]], axis=-1)
     ))
 
-    # KOP
-    if kop_row is not None:
-        fig.add_trace(go.Scatter3d(
-            x=[kop_row["X"]],
-            y=[kop_row["Y"]],
-            z=[-kop_row["TVD"]],
-            mode="markers+text",
-            name="KOP",
-            text=["KOP"],
-            textposition="top center",
-            marker=dict(size=7, color="orange", symbol="diamond"),
-            hovertemplate=(
-                f"KOP<br>MD: {kop_row['MD']:.2f}<br>"
-                f"INC: {kop_row['INC']:.2f}<br>"
-                f"TVD: {kop_row['TVD']:.2f}<extra></extra>"
-            )
-        ))
+    
 
     # Puntos clave
     if puntos_clave:
@@ -340,15 +304,6 @@ def crear_grafico_planta(df, kop_row=None, puntos_clave=None, evento_row=None, e
         customdata=np.stack([df["MD"], df["INC"], df["AZI"]], axis=-1)
     ))
 
-    if kop_row is not None:
-        fig.add_trace(go.Scatter(
-            x=[kop_row["X"]],
-            y=[kop_row["Y"]],
-            mode="markers+text",
-            name="KOP",
-            text=["KOP"],
-            textposition="top center"
-        ))
 
     if puntos_clave:
         for nombre, row in puntos_clave.items():
