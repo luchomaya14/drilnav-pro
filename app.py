@@ -351,7 +351,6 @@ if file:
             df = comparar_dls(df)
             df = clasificar(df)
 
-            idx_kop, kop_row = detectar_kop(df, umbral_inc=2.0, estaciones_consecutivas=3)
             puntos_clave = obtener_puntos_clave(df)
 
             st.success("Archivo procesado correctamente")
