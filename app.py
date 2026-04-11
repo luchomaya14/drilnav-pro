@@ -347,6 +347,29 @@ def crear_grafico_planta(df, kop_row=None, puntos_clave=None, evento_row=None, e
 
     return fig
 
+def generar_pdf(df):
+    from reportlab.platypus import SimpleDocTemplate, Paragraph
+    from reportlab.lib.styles import getSampleStyleSheet
+    import tempfile
+
+    styles = getSampleStyleSheet()
+
+    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    doc = SimpleDocTemplate(tmp_file.name)
+
+    elementos = []
+
+    elementos.append(Paragraph("DrillNav Pro", styles["Title"]))
+    elementos.append(Paragraph("Reporte de Trayectoria de Pozo", styles["Heading2"]))
+    elementos.append(Paragraph("Developed by Luis Maya", styles["Italic"]))
+
+    elementos.append(Paragraph(f"MD Máx: {df['MD'].max():.2f}", styles["Normal"]))
+    elementos.append(Paragraph(f"TVD Máx: {df['TVD'].max():.2f}", styles["Normal"]))
+
+    doc.build(elementos)
+
+    return tmp_file.name
+
 
 # -------------------------
 # APP
