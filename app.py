@@ -23,19 +23,18 @@ def limpiar_surveys(df):
 
     df = df.iloc[:, :11].copy()
 
-    # Estructura observada en tu archivo
     df.columns = [
-        "MD",        # 0
-        "INC",       # 1
-        "AZI",       # 2
-        "TVD",       # 3
-        "X",         # 4
-        "Y",         # 5
-        "COL7",      # 6
-        "DLS",       # 7
-        "BUILD",     # 8
-        "Status",    # 9
-        "Tipo"       # 10
+        "MD",
+        "INC",
+        "AZI",
+        "TVD",
+        "X",
+        "Y",
+        "COL7",
+        "DLS",
+        "BUILD",
+        "Status",
+        "Tipo"
     ]
 
     columnas_numericas = ["MD", "INC", "AZI", "TVD", "X", "Y", "COL7", "DLS", "BUILD"]
@@ -59,8 +58,8 @@ def calcular_dls_aprox(df):
     df["Delta_MD"] = df["Delta_MD"].replace(0, np.nan)
 
     df["DLS_calc"] = np.sqrt(
-        (df["Delta_INC"].fillna(0))**2 +
-        (df["Delta_AZI"].fillna(0))**2
+        (df["Delta_INC"].fillna(0)) ** 2 +
+        (df["Delta_AZI"].fillna(0)) ** 2
     )
 
     return df
@@ -347,8 +346,9 @@ def crear_grafico_planta(df, kop_row=None, puntos_clave=None, evento_row=None, e
 
     return fig
 
-def generar_pdf(df):
-    from reportlab.platypus import SimpleDocTemplate, Paragraph
+
+def generar_pdf(df, kop_row, evento_row, evento_nombre, mensajes):
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
     from reportlab.lib.styles import getSampleStyleSheet
     import tempfile
 
@@ -362,9 +362,33 @@ def generar_pdf(df):
     elementos.append(Paragraph("DrillNav Pro", styles["Title"]))
     elementos.append(Paragraph("Reporte de Trayectoria de Pozo", styles["Heading2"]))
     elementos.append(Paragraph("Developed by Luis Maya", styles["Italic"]))
+    elementos.append(Spacer(1, 12))
 
     elementos.append(Paragraph(f"MD Máx: {df['MD'].max():.2f}", styles["Normal"]))
     elementos.append(Paragraph(f"TVD Máx: {df['TVD'].max():.2f}", styles["Normal"]))
+    elementos.append(Paragraph(f"DLS Máx: {df['DLS'].max():.2f}", styles["Normal"]))
+    elementos.append(Paragraph(f"Tortuosidad Máx: {df['Tortuosity'].max():.2f}", styles["Normal"]))
+    elementos.append(Spacer(1, 10))
+
+    if kop_row is not None:
+        elementos.append(Paragraph("KOP oficial", styles["Heading3"]))
+        elementos.append(Paragraph(f"MD: {kop_row['MD']:.2f}", styles["Normal"]))
+        elementos.append(Paragraph(f"TVD: {kop_row['TVD']:.2f}", styles["Normal"]))
+        elementos.append(Paragraph(f"INC: {kop_row['INC']:.2f}", styles["Normal"]))
+        elementos.append(Paragraph(f"AZI: {kop_row['AZI']:.2f}", styles["Normal"]))
+        elementos.append(Spacer(1, 10))
+
+    if evento_row is not None:
+        elementos.append(Paragraph("Evento operacional", styles["Heading3"]))
+        elementos.append(Paragraph(f"Nombre: {evento_nombre}", styles["Normal"]))
+        elementos.append(Paragraph(f"MD: {evento_row['MD']:.2f}", styles["Normal"]))
+        elementos.append(Paragraph(f"TVD: {evento_row['TVD']:.2f}", styles["Normal"]))
+        elementos.append(Spacer(1, 10))
+
+    if mensajes:
+        elementos.append(Paragraph("Diagnóstico automático", styles["Heading3"]))
+        for msg in mensajes:
+            elementos.append(Paragraph(msg, styles["Normal"]))
 
     doc.build(elementos)
 
@@ -542,23 +566,30 @@ if file:
             # -------------------------
             # DIAGNÓSTICO
             # -------------------------
-
             st.subheader("🧠 Diagnóstico automático")
-            for msg in diagnostico(df, event_depth=evento_md):
+            mensajes = diagnostico(df, event_depth=evento_md)
+
+            for msg in mensajes:
                 st.write(msg)
 
-st.subheader("📄 Exportar informe")
+            # -------------------------
+            # EXPORTAR PDF
+            # -------------------------
+            st.subheader("📄 Exportar informe")
 
-if st.button("Generar PDF"):
-    pdf_path = generar_pdf(df)
+            if st.button("Generar PDF"):
+                try:
+                    pdf_path = generar_pdf(df, kop_row, evento_row, evento_nombre, mensajes)
 
-    with open(pdf_path, "rb") as f:
-        st.download_button(
-            label="Descargar informe PDF",
-            data=f,
-            file_name="informe_drillnav.pdf",
-            mime="application/pdf"
-        )
+                    with open(pdf_path, "rb") as f:
+                        st.download_button(
+                            label="Descargar informe PDF",
+                            data=f,
+                            file_name="informe_drillnav.pdf",
+                            mime="application/pdf"
+                        )
+                except Exception as e:
+                    st.error(f"Error generando PDF: {e}")
 
             # -------------------------
             # COMPARACIÓN DLS
@@ -572,7 +603,7 @@ if st.button("Generar PDF"):
                 diferencias_altas = df[df["Dif_DLS"] > 2].copy()
 
                 if diferencias_altas.empty:
-                    st.info("No se detectaron diferencias grandes entre DLS reportado y DLS calculado.")
+                    st.info("No se detectaron diferencias grandes entre DLS reportado y calculado.")
                 else:
                     st.warning("Se detectaron diferencias relevantes entre DLS reportado y calculado.")
                     st.dataframe(
