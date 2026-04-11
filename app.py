@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 st.set_page_config(page_title="DrillNav Pro", layout="wide")
 
 st.title("🛢️ DrillNav Pro")
-st.write("Build 6 Galáctico - 3D + KOP automático + markers operacionales")
+st.write("Build 6 - 3D + KOP oficial manual + markers operacionales")
 
 file = st.file_uploader("Subí tu Excel", type=["xlsx"])
 
@@ -43,11 +43,7 @@ def limpiar_surveys(df):
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
     df = df.dropna(subset=["MD", "INC", "AZI"]).copy()
-
-    # Normalización básica
     df["TVD"] = df["TVD"].abs()
-
-    # Orden por MD por si el archivo viene desordenado
     df = df.sort_values("MD").reset_index(drop=True)
 
     return df
@@ -60,10 +56,8 @@ def calcular_dls_aprox(df):
     df["Delta_INC"] = df["INC"].diff()
     df["Delta_AZI"] = df["AZI"].diff()
 
-    # Evitar valores raros por paso cero
     df["Delta_MD"] = df["Delta_MD"].replace(0, np.nan)
 
-    # Aproximación simple para chequeo rápido
     df["DLS_calc"] = np.sqrt(
         (df["Delta_INC"].fillna(0))**2 +
         (df["Delta_AZI"].fillna(0))**2
@@ -78,7 +72,6 @@ def calcular_microtortuosidad(df, ventana=5):
     if "DLS_calc" not in df.columns:
         df = calcular_dls_aprox(df)
 
-    # Índice simple de variación local
     df["MicroVar"] = (
         df["INC"].diff().abs().fillna(0) +
         df["AZI"].diff().abs().fillna(0)
@@ -140,22 +133,24 @@ def comparar_dls(df):
     return df
 
 
+def buscar_fila_cercana(df, md_objetivo):
+    if df.empty:
+        return None
 
+    idx = (df["MD"] - md_objetivo).abs().idxmin()
+    return df.loc[idx]
 
 
 def obtener_puntos_clave(df):
     puntos = {}
 
-    # TD
     idx_td = df["MD"].idxmax()
     puntos["TD"] = df.loc[idx_td]
 
-    # Máx DLS
     if df["DLS"].notna().any():
         idx_max_dls = df["DLS"].idxmax()
         puntos["Max DLS"] = df.loc[idx_max_dls]
 
-    # Máx Tortuosidad
     if df["Tortuosity"].notna().any():
         idx_max_tort = df["Tortuosity"].idxmax()
         puntos["Max Tortuosidad"] = df.loc[idx_max_tort]
@@ -204,18 +199,9 @@ def diagnostico(df, event_depth=None):
     return mensajes
 
 
-def buscar_evento_cercano(df, event_depth):
-    if event_depth is None:
-        return None
-
-    idx = (df["MD"] - event_depth).abs().idxmin()
-    return df.loc[idx]
-
-
 def crear_grafico_3d(df, kop_row=None, puntos_clave=None, evento_row=None, evento_nombre="Evento"):
     fig = go.Figure()
 
-    # Trayectoria principal
     fig.add_trace(go.Scatter3d(
         x=df["X"],
         y=df["Y"],
@@ -232,9 +218,25 @@ def crear_grafico_3d(df, kop_row=None, puntos_clave=None, evento_row=None, event
         customdata=np.stack([df["MD"], df["INC"], df["AZI"], df["TVD"]], axis=-1)
     ))
 
-    
+    if kop_row is not None:
+        fig.add_trace(go.Scatter3d(
+            x=[kop_row["X"]],
+            y=[kop_row["Y"]],
+            z=[-kop_row["TVD"]],
+            mode="markers+text",
+            name="KOP oficial",
+            text=["KOP oficial"],
+            textposition="top center",
+            marker=dict(size=8, color="orange", symbol="diamond"),
+            hovertemplate=(
+                f"KOP oficial<br>"
+                f"MD: {kop_row['MD']:.2f}<br>"
+                f"TVD: {kop_row['TVD']:.2f}<br>"
+                f"INC: {kop_row['INC']:.2f}<br>"
+                f"AZI: {kop_row['AZI']:.2f}<extra></extra>"
+            )
+        ))
 
-    # Puntos clave
     if puntos_clave:
         for nombre, row in puntos_clave.items():
             fig.add_trace(go.Scatter3d(
@@ -253,7 +255,6 @@ def crear_grafico_3d(df, kop_row=None, puntos_clave=None, evento_row=None, event
                 )
             ))
 
-    # Evento manual
     if evento_row is not None:
         fig.add_trace(go.Scatter3d(
             x=[evento_row["X"]],
@@ -304,6 +305,16 @@ def crear_grafico_planta(df, kop_row=None, puntos_clave=None, evento_row=None, e
         customdata=np.stack([df["MD"], df["INC"], df["AZI"]], axis=-1)
     ))
 
+    if kop_row is not None:
+        fig.add_trace(go.Scatter(
+            x=[kop_row["X"]],
+            y=[kop_row["Y"]],
+            mode="markers+text",
+            name="KOP oficial",
+            text=["KOP oficial"],
+            textposition="top center",
+            marker=dict(size=10, color="orange")
+        ))
 
     if puntos_clave:
         for nombre, row in puntos_clave.items():
@@ -323,7 +334,8 @@ def crear_grafico_planta(df, kop_row=None, puntos_clave=None, evento_row=None, e
             mode="markers+text",
             name=evento_nombre,
             text=[evento_nombre],
-            textposition="top center"
+            textposition="top center",
+            marker=dict(size=10, color="red")
         ))
 
     fig.update_layout(
@@ -356,27 +368,35 @@ if file:
             st.success("Archivo procesado correctamente")
 
             # -------------------------
-            # PANEL DE EVENTO MANUAL
+            # REFERENCIAS OPERACIONALES
             # -------------------------
-            st.subheader("🎯 Evento operacional manual")
+            st.subheader("📍 Referencias operacionales")
 
-            col_ev1, col_ev2 = st.columns(2)
+            col_ref1, col_ref2 = st.columns(2)
 
-            with col_ev1:
-                evento_nombre = st.text_input(
-                    "Nombre del evento",
-                    value="Asentamiento casing"
+            with col_ref1:
+                kop_md = st.number_input(
+                    "KOP oficial (MD)",
+                    min_value=0.0,
+                    value=2265.0,
+                    step=0.01
                 )
 
-            with col_ev2:
+            with col_ref2:
                 evento_md = st.number_input(
-                    "MD del evento",
+                    "Evento operacional (MD)",
                     min_value=0.0,
                     value=3116.87,
                     step=0.01
                 )
 
-            evento_row = buscar_evento_cercano(df, evento_md)
+            evento_nombre = st.text_input(
+                "Nombre del evento operacional",
+                value="Asentamiento casing"
+            )
+
+            kop_row = buscar_fila_cercana(df, kop_md)
+            evento_row = buscar_fila_cercana(df, evento_md)
 
             # -------------------------
             # VALIDACIONES
@@ -391,15 +411,27 @@ if file:
                 st.info("No se detectaron inconsistencias estructurales obvias.")
 
             # -------------------------
+            # KOP OFICIAL CORRELACIONADO
+            # -------------------------
+            st.subheader("📌 KOP oficial correlacionado")
+
+            if kop_row is not None:
+                col_k1, col_k2, col_k3, col_k4 = st.columns(4)
+                col_k1.metric("MD KOP", f"{kop_row['MD']:.2f}")
+                col_k2.metric("TVD KOP", f"{kop_row['TVD']:.2f}")
+                col_k3.metric("INC KOP", f"{kop_row['INC']:.2f}")
+                col_k4.metric("AZI KOP", f"{kop_row['AZI']:.2f}")
+
+            # -------------------------
             # RESUMEN DE PUNTOS CLAVE
             # -------------------------
-            st.subheader("📍 Puntos automáticos detectados")
+            st.subheader("📍 Puntos clave")
 
             resumen = []
 
             if kop_row is not None:
                 resumen.append({
-                    "Punto": "KOP",
+                    "Punto": "KOP oficial",
                     "MD": round(kop_row["MD"], 2),
                     "INC": round(kop_row["INC"], 2),
                     "AZI": round(kop_row["AZI"], 2),
