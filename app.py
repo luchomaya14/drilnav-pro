@@ -542,9 +542,23 @@ if file:
             # -------------------------
             # DIAGNÓSTICO
             # -------------------------
+
             st.subheader("🧠 Diagnóstico automático")
             for msg in diagnostico(df, event_depth=evento_md):
                 st.write(msg)
+
+st.subheader("📄 Exportar informe")
+
+if st.button("Generar PDF"):
+    pdf_path = generar_pdf(df)
+
+    with open(pdf_path, "rb") as f:
+        st.download_button(
+            label="Descargar informe PDF",
+            data=f,
+            file_name="informe_drillnav.pdf",
+            mime="application/pdf"
+        )
 
             # -------------------------
             # COMPARACIÓN DLS
