@@ -1,11 +1,12 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import plotly.graph_objects as go
 
 st.set_page_config(page_title="DrillNav Pro", layout="wide")
 
 st.title("🛢️ DrillNav Pro")
-st.write("Build 5 - Lectura robusta + validación + diagnóstico automático")
+st.write("Build 6 Galáctico - 3D + KOP automático + markers operacionales")
 
 file = st.file_uploader("Subí tu Excel", type=["xlsx"])
 
@@ -20,65 +21,70 @@ def limpiar_surveys(df):
         st.error(f"El archivo tiene {df.shape[1]} columnas. Se esperaban al menos 11.")
         return None
 
-    # Nos quedamos con las primeras 11 columnas
     df = df.iloc[:, :11].copy()
 
-    # Asignación manual de nombres según la estructura real observada
+    # Estructura observada en tu archivo
     df.columns = [
-        "MD",        # col 0
-        "INC",       # col 1
-        "AZI",       # col 2
-        "TVD",       # col 3
-        "COL5",      # col 4
-        "COL6",      # col 5
-        "COL7",      # col 6
-        "DLS",       # col 7
-        "BUILD",     # col 8
-        "Status",    # col 9
-        "Tipo"       # col 10
+        "MD",        # 0
+        "INC",       # 1
+        "AZI",       # 2
+        "TVD",       # 3
+        "X",         # 4
+        "Y",         # 5
+        "COL7",      # 6
+        "DLS",       # 7
+        "BUILD",     # 8
+        "Status",    # 9
+        "Tipo"       # 10
     ]
 
-    # Conversión numérica
-    columnas_numericas = ["MD", "INC", "AZI", "TVD", "COL5", "COL6", "COL7", "DLS", "BUILD"]
+    columnas_numericas = ["MD", "INC", "AZI", "TVD", "X", "Y", "COL7", "DLS", "BUILD"]
     for col in columnas_numericas:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Eliminar filas inválidas
     df = df.dropna(subset=["MD", "INC", "AZI"]).copy()
 
-    # Normalizar TVD a positivo si viene con signo negativo
+    # Normalización básica
     df["TVD"] = df["TVD"].abs()
+
+    # Orden por MD por si el archivo viene desordenado
+    df = df.sort_values("MD").reset_index(drop=True)
 
     return df
 
 
-def calcular_dls(df):
+def calcular_dls_aprox(df):
     df = df.copy()
 
     df["Delta_MD"] = df["MD"].diff()
     df["Delta_INC"] = df["INC"].diff()
     df["Delta_AZI"] = df["AZI"].diff()
 
-    # Evitar divisiones raras o pasos cero
+    # Evitar valores raros por paso cero
     df["Delta_MD"] = df["Delta_MD"].replace(0, np.nan)
 
-    # Aproximación simple de DLS
+    # Aproximación simple para chequeo rápido
     df["DLS_calc"] = np.sqrt(
         (df["Delta_INC"].fillna(0))**2 +
         (df["Delta_AZI"].fillna(0))**2
     )
 
-    # Si querés luego lo refinamos a fórmula más petrolera por 30 m o 100 ft
     return df
 
 
-def calcular_tortuosidad(df):
+def calcular_microtortuosidad(df, ventana=5):
     df = df.copy()
 
     if "DLS_calc" not in df.columns:
-        df = calcular_dls(df)
+        df = calcular_dls_aprox(df)
 
-    df["Tortuosity"] = df["DLS_calc"].rolling(window=5, min_periods=1).sum()
+    # Índice simple de variación local
+    df["MicroVar"] = (
+        df["INC"].diff().abs().fillna(0) +
+        df["AZI"].diff().abs().fillna(0)
+    )
+
+    df["Tortuosity"] = df["MicroVar"].rolling(window=ventana, min_periods=1).sum()
 
     return df
 
@@ -91,64 +97,36 @@ def clasificar(df):
             return "🔴 Crítico"
         elif pd.notna(row["DLS"]) and row["DLS"] > 5:
             return "🟠 Alto"
-        elif pd.notna(row["Tortuosity"]) and row["Tortuosity"] > 100:
+        elif pd.notna(row["Tortuosity"]) and row["Tortuosity"] > 25:
             return "🟡 Tortuoso"
         else:
             return "🟢 Normal"
 
     df["Alerta"] = df.apply(alerta, axis=1)
-
     return df
-
-
-def diagnostico(df):
-    mensajes = []
-
-    max_dls = df["DLS"].max() if "DLS" in df.columns else np.nan
-    max_tort = df["Tortuosity"].max() if "Tortuosity" in df.columns else np.nan
-
-    if pd.notna(max_dls):
-        if max_dls > 8:
-            mensajes.append("🔴 Trayectoria agresiva: DLS muy alto, riesgo de fatiga, torque y drag.")
-        elif max_dls > 5:
-            mensajes.append("🟠 DLS elevado: conviene revisar control direccional y suavidad de la trayectoria.")
-
-    if pd.notna(max_tort) and max_tort > 100:
-        mensajes.append("🟡 Alta tortuosidad: posible riesgo de key seat, dificultad de casing y aumento de arrastre.")
-
-    if not mensajes:
-        mensajes.append("🟢 Trayectoria dentro de parámetros razonables para este análisis preliminar.")
-
-    return mensajes
 
 
 def validar_columnas(df):
     avisos = []
 
     if df.empty:
-        avisos.append("⚠️ El archivo quedó vacío después de limpiar datos.")
+        avisos.append("⚠️ El archivo quedó vacío después de la limpieza.")
         return avisos
 
-    # MD debería crecer
     if not df["MD"].is_monotonic_increasing:
-        avisos.append("⚠️ La columna MD no está en orden ascendente. Revisar el survey.")
+        avisos.append("⚠️ La MD no está en orden ascendente.")
 
-    # TVD no debería superar MD en trayectoria realista
     if df["TVD"].max() > df["MD"].max():
-        avisos.append("⚠️ La TVD máxima es mayor que la MD máxima. Eso huele raro: revisar mapeo de columnas.")
+        avisos.append("⚠️ La TVD máxima es mayor que la MD máxima. Revisar mapeo de columnas.")
 
-    # INC razonable
     if df["INC"].max() > 180:
-        avisos.append("⚠️ Se detectaron inclinaciones mayores a 180°. Posible columna mal interpretada.")
+        avisos.append("⚠️ Se detectaron INC mayores a 180°. Eso no huele bien.")
 
-    # AZI razonable
     if df["AZI"].max() > 360:
-        avisos.append("⚠️ Se detectaron azimuts mayores a 360°. Posible columna mal interpretada.")
+        avisos.append("⚠️ Se detectaron AZI mayores a 360°. Revisar columnas.")
 
-    # Columnas duplicadas sospechosas
-    if "COL5" in df.columns and "COL6" in df.columns:
-        if df["COL5"].equals(df["COL6"]):
-            avisos.append("ℹ️ COL5 y COL6 son idénticas en todo el archivo. Puede ser correcto, pero merece revisión.")
+    if df["X"].equals(df["Y"]):
+        avisos.append("ℹ️ X e Y son idénticas en todo el archivo. Puede ser correcto, pero merece revisión.")
 
     return avisos
 
@@ -156,12 +134,251 @@ def validar_columnas(df):
 def comparar_dls(df):
     df = df.copy()
 
-    if "DLS" not in df.columns or "DLS_calc" not in df.columns:
-        return df
-
-    df["Dif_DLS"] = (df["DLS"] - df["DLS_calc"]).abs()
+    if "DLS" in df.columns and "DLS_calc" in df.columns:
+        df["Dif_DLS"] = (df["DLS"] - df["DLS_calc"]).abs()
 
     return df
+
+
+def detectar_kop(df, umbral_inc=2.0, estaciones_consecutivas=3):
+    """
+    Detecta el primer punto donde INC supera el umbral
+    durante N estaciones consecutivas.
+    """
+    df = df.copy()
+
+    condicion = df["INC"] > umbral_inc
+
+    contador = 0
+    for i, val in enumerate(condicion):
+        if val:
+            contador += 1
+        else:
+            contador = 0
+
+        if contador >= estaciones_consecutivas:
+            idx_kop = i - estaciones_consecutivas + 1
+            return idx_kop, df.loc[idx_kop]
+
+    return None, None
+
+
+def obtener_puntos_clave(df):
+    puntos = {}
+
+    # TD
+    idx_td = df["MD"].idxmax()
+    puntos["TD"] = df.loc[idx_td]
+
+    # Máx DLS
+    if df["DLS"].notna().any():
+        idx_max_dls = df["DLS"].idxmax()
+        puntos["Max DLS"] = df.loc[idx_max_dls]
+
+    # Máx Tortuosidad
+    if df["Tortuosity"].notna().any():
+        idx_max_tort = df["Tortuosity"].idxmax()
+        puntos["Max Tortuosidad"] = df.loc[idx_max_tort]
+
+    return puntos
+
+
+def diagnostico(df, event_depth=None):
+    mensajes = []
+
+    max_dls = df["DLS"].max() if "DLS" in df.columns else np.nan
+    max_tort = df["Tortuosity"].max() if "Tortuosity" in df.columns else np.nan
+
+    if pd.notna(max_dls):
+        if max_dls > 8:
+            mensajes.append("🔴 Trayectoria agresiva: DLS muy alto, riesgo de torque, drag y fatiga.")
+        elif max_dls > 5:
+            mensajes.append("🟠 DLS elevado: revisar control direccional y suavidad de la trayectoria.")
+
+    if pd.notna(max_tort):
+        if max_tort > 35:
+            mensajes.append("🔴 Microtortuosidad muy alta: zona candidata a problemas mecánicos reales.")
+        elif max_tort > 25:
+            mensajes.append("🟡 Tortuosidad elevada: revisar comportamiento de casing, drag y restricciones locales.")
+
+    if event_depth is not None:
+        cercano = df.iloc[(df["MD"] - event_depth).abs().argsort()[:1]]
+        if not cercano.empty:
+            md_ev = cercano["MD"].values[0]
+            tort_ev = cercano["Tortuosity"].values[0]
+            dls_ev = cercano["DLS"].values[0] if pd.notna(cercano["DLS"].values[0]) else np.nan
+
+            if pd.notna(tort_ev) and tort_ev > 25:
+                mensajes.append(
+                    f"🎯 El evento operacional cargado cerca de MD {md_ev:.2f} coincide con una zona de tortuosidad elevada."
+                )
+
+            if pd.notna(dls_ev) and dls_ev > 5:
+                mensajes.append(
+                    f"🎯 El evento operacional cargado cerca de MD {md_ev:.2f} también coincide con DLS elevado."
+                )
+
+    if not mensajes:
+        mensajes.append("🟢 No se detectaron alertas relevantes en este análisis preliminar.")
+
+    return mensajes
+
+
+def buscar_evento_cercano(df, event_depth):
+    if event_depth is None:
+        return None
+
+    idx = (df["MD"] - event_depth).abs().idxmin()
+    return df.loc[idx]
+
+
+def crear_grafico_3d(df, kop_row=None, puntos_clave=None, evento_row=None, evento_nombre="Evento"):
+    fig = go.Figure()
+
+    # Trayectoria principal
+    fig.add_trace(go.Scatter3d(
+        x=df["X"],
+        y=df["Y"],
+        z=-df["TVD"],
+        mode="lines",
+        name="Trayectoria",
+        line=dict(width=6, color="deepskyblue"),
+        hovertemplate=(
+            "MD: %{customdata[0]:.2f}<br>"
+            "INC: %{customdata[1]:.2f}<br>"
+            "AZI: %{customdata[2]:.2f}<br>"
+            "TVD: %{customdata[3]:.2f}<extra></extra>"
+        ),
+        customdata=np.stack([df["MD"], df["INC"], df["AZI"], df["TVD"]], axis=-1)
+    ))
+
+    # KOP
+    if kop_row is not None:
+        fig.add_trace(go.Scatter3d(
+            x=[kop_row["X"]],
+            y=[kop_row["Y"]],
+            z=[-kop_row["TVD"]],
+            mode="markers+text",
+            name="KOP",
+            text=["KOP"],
+            textposition="top center",
+            marker=dict(size=7, color="orange", symbol="diamond"),
+            hovertemplate=(
+                f"KOP<br>MD: {kop_row['MD']:.2f}<br>"
+                f"INC: {kop_row['INC']:.2f}<br>"
+                f"TVD: {kop_row['TVD']:.2f}<extra></extra>"
+            )
+        ))
+
+    # Puntos clave
+    if puntos_clave:
+        for nombre, row in puntos_clave.items():
+            fig.add_trace(go.Scatter3d(
+                x=[row["X"]],
+                y=[row["Y"]],
+                z=[-row["TVD"]],
+                mode="markers+text",
+                name=nombre,
+                text=[nombre],
+                textposition="top center",
+                marker=dict(size=6),
+                hovertemplate=(
+                    f"{nombre}<br>"
+                    f"MD: {row['MD']:.2f}<br>"
+                    f"TVD: {row['TVD']:.2f}<extra></extra>"
+                )
+            ))
+
+    # Evento manual
+    if evento_row is not None:
+        fig.add_trace(go.Scatter3d(
+            x=[evento_row["X"]],
+            y=[evento_row["Y"]],
+            z=[-evento_row["TVD"]],
+            mode="markers+text",
+            name=evento_nombre,
+            text=[evento_nombre],
+            textposition="top center",
+            marker=dict(size=8, color="red", symbol="x"),
+            hovertemplate=(
+                f"{evento_nombre}<br>"
+                f"MD: {evento_row['MD']:.2f}<br>"
+                f"TVD: {evento_row['TVD']:.2f}<br>"
+                f"DLS: {evento_row['DLS']:.2f}<br>"
+                f"Tortuosidad: {evento_row['Tortuosity']:.2f}<extra></extra>"
+            )
+        ))
+
+    fig.update_layout(
+        title="Trayectoria 3D del pozo",
+        scene=dict(
+            xaxis_title="X",
+            yaxis_title="Y",
+            zaxis_title="TVD",
+            bgcolor="rgba(0,0,0,0)"
+        ),
+        height=750,
+        margin=dict(l=0, r=0, b=0, t=50)
+    )
+
+    return fig
+
+
+def crear_grafico_planta(df, kop_row=None, puntos_clave=None, evento_row=None, evento_nombre="Evento"):
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=df["X"],
+        y=df["Y"],
+        mode="lines+markers",
+        name="Planta",
+        hovertemplate=(
+            "MD: %{customdata[0]:.2f}<br>"
+            "INC: %{customdata[1]:.2f}<br>"
+            "AZI: %{customdata[2]:.2f}<extra></extra>"
+        ),
+        customdata=np.stack([df["MD"], df["INC"], df["AZI"]], axis=-1)
+    ))
+
+    if kop_row is not None:
+        fig.add_trace(go.Scatter(
+            x=[kop_row["X"]],
+            y=[kop_row["Y"]],
+            mode="markers+text",
+            name="KOP",
+            text=["KOP"],
+            textposition="top center"
+        ))
+
+    if puntos_clave:
+        for nombre, row in puntos_clave.items():
+            fig.add_trace(go.Scatter(
+                x=[row["X"]],
+                y=[row["Y"]],
+                mode="markers+text",
+                name=nombre,
+                text=[nombre],
+                textposition="top center"
+            ))
+
+    if evento_row is not None:
+        fig.add_trace(go.Scatter(
+            x=[evento_row["X"]],
+            y=[evento_row["Y"]],
+            mode="markers+text",
+            name=evento_nombre,
+            text=[evento_nombre],
+            textposition="top center"
+        ))
+
+    fig.update_layout(
+        title="Vista en planta (X vs Y)",
+        xaxis_title="X",
+        yaxis_title="Y",
+        height=600
+    )
+
+    return fig
 
 
 # -------------------------
@@ -170,24 +387,47 @@ def comparar_dls(df):
 
 if file:
     try:
-        # Leer SIN encabezados
         raw = pd.read_excel(file, engine="openpyxl", header=None)
-
         df = limpiar_surveys(raw)
 
         if df is not None and not df.empty:
-            df = calcular_dls(df)
-            df = calcular_tortuosidad(df)
+            df = calcular_dls_aprox(df)
+            df = calcular_microtortuosidad(df, ventana=5)
             df = comparar_dls(df)
             df = clasificar(df)
 
+            idx_kop, kop_row = detectar_kop(df, umbral_inc=2.0, estaciones_consecutivas=3)
+            puntos_clave = obtener_puntos_clave(df)
+
             st.success("Archivo procesado correctamente")
+
+            # -------------------------
+            # PANEL DE EVENTO MANUAL
+            # -------------------------
+            st.subheader("🎯 Evento operacional manual")
+
+            col_ev1, col_ev2 = st.columns(2)
+
+            with col_ev1:
+                evento_nombre = st.text_input(
+                    "Nombre del evento",
+                    value="Asentamiento casing"
+                )
+
+            with col_ev2:
+                evento_md = st.number_input(
+                    "MD del evento",
+                    min_value=0.0,
+                    value=3116.87,
+                    step=0.01
+                )
+
+            evento_row = buscar_evento_cercano(df, evento_md)
 
             # -------------------------
             # VALIDACIONES
             # -------------------------
             st.subheader("🧪 Validación automática del archivo")
-
             avisos = validar_columnas(df)
 
             if avisos:
@@ -195,6 +435,43 @@ if file:
                     st.warning(aviso)
             else:
                 st.info("No se detectaron inconsistencias estructurales obvias.")
+
+            # -------------------------
+            # RESUMEN DE PUNTOS CLAVE
+            # -------------------------
+            st.subheader("📍 Puntos automáticos detectados")
+
+            resumen = []
+
+            if kop_row is not None:
+                resumen.append({
+                    "Punto": "KOP",
+                    "MD": round(kop_row["MD"], 2),
+                    "INC": round(kop_row["INC"], 2),
+                    "AZI": round(kop_row["AZI"], 2),
+                    "TVD": round(kop_row["TVD"], 2)
+                })
+
+            for nombre, row in puntos_clave.items():
+                resumen.append({
+                    "Punto": nombre,
+                    "MD": round(row["MD"], 2),
+                    "INC": round(row["INC"], 2),
+                    "AZI": round(row["AZI"], 2),
+                    "TVD": round(row["TVD"], 2)
+                })
+
+            if evento_row is not None:
+                resumen.append({
+                    "Punto": evento_nombre,
+                    "MD": round(evento_row["MD"], 2),
+                    "INC": round(evento_row["INC"], 2),
+                    "AZI": round(evento_row["AZI"], 2),
+                    "TVD": round(evento_row["TVD"], 2)
+                })
+
+            if resumen:
+                st.dataframe(pd.DataFrame(resumen), use_container_width=True)
 
             # -------------------------
             # VISTA PREVIA
@@ -206,7 +483,6 @@ if file:
             # MÉTRICAS
             # -------------------------
             st.subheader("📌 Métricas principales")
-
             col1, col2, col3, col4 = st.columns(4)
 
             col1.metric("Máx MD", f"{df['MD'].max():.2f}")
@@ -215,7 +491,7 @@ if file:
             col4.metric("Máx Tortuosidad", f"{df['Tortuosity'].max():.2f}")
 
             # -------------------------
-            # GRÁFICOS
+            # GRÁFICOS 2D
             # -------------------------
             st.subheader("📈 Gráficos")
 
@@ -229,15 +505,40 @@ if file:
             st.line_chart(df.set_index("MD")[["Tortuosity"]])
 
             # -------------------------
+            # VISTA EN PLANTA
+            # -------------------------
+            st.subheader("🧭 Vista en planta")
+            fig_planta = crear_grafico_planta(
+                df,
+                kop_row=kop_row,
+                puntos_clave=puntos_clave,
+                evento_row=evento_row,
+                evento_nombre=evento_nombre
+            )
+            st.plotly_chart(fig_planta, use_container_width=True)
+
+            # -------------------------
+            # VISTA 3D
+            # -------------------------
+            st.subheader("🌌 Trayectoria 3D")
+            fig_3d = crear_grafico_3d(
+                df,
+                kop_row=kop_row,
+                puntos_clave=puntos_clave,
+                evento_row=evento_row,
+                evento_nombre=evento_nombre
+            )
+            st.plotly_chart(fig_3d, use_container_width=True)
+
+            # -------------------------
             # DIAGNÓSTICO
             # -------------------------
             st.subheader("🧠 Diagnóstico automático")
-
-            for msg in diagnostico(df):
+            for msg in diagnostico(df, event_depth=evento_md):
                 st.write(msg)
 
             # -------------------------
-            # DIFERENCIAS DLS
+            # COMPARACIÓN DLS
             # -------------------------
             st.subheader("⚖️ Comparación entre DLS reportado y DLS calculado")
 
